@@ -1,9 +1,9 @@
 import inquirer from "inquirer";
 import chalk from "chalk";
-import { uiWorkflows } from "./ui.js";
-import { importWorkflows, getWorkflowNameFromSource } from "./import.js";
-import { exportWorkflows } from "./export.js";
 import { settingsMenu } from "./settings.js";
+import { uiWorkflows } from "./ui.js";
+import { exportWorkflows } from "./export.js";
+import { importWorkflows, getWorkflowNameFromSource } from "./import.js";
 
 function header() {
   console.clear();
@@ -20,11 +20,12 @@ export async function interactiveMenu(opts) {
         type: "list",
         name: "action",
         message: "Main Menu",
-        pageSize: 10,
+        pageSize: 12,
         choices: [
           { name: "📄 Workflows (interactive list)", value: "workflows" },
-          { name: "📥 Import workflow (file/URL)", value: "import" },
-          { name: "📦 Export all workflows", value: "exportAll" },
+          { name: "📥 Import workflow (file/URL/zip)", value: "import" },
+          { name: "📦 Export workflows (incl. bundle.zip)", value: "export" },
+          { name: "🕘 Recent workflows", value: "recent" },
           { name: "⚙️ Settings", value: "settings" },
           new inquirer.Separator(),
           { name: chalk.gray("Exit"), value: "quit" },
@@ -44,37 +45,50 @@ export async function interactiveMenu(opts) {
       continue;
     }
 
+    if (action === "recent") {
+      await uiWorkflows({ global: opts.global, recent: true });
+      continue;
+    }
+
+    if (action === "export") {
+      const answers = await inquirer.prompt([
+        { type: "confirm", name: "all", message: "Export all workflows?", default: true },
+        { type: "confirm", name: "bundle", message: "Create bundle.zip?", default: true },
+        { type: "input", name: "out", message: "Output path/folder:", default: "./exports" },
+        { type: "confirm", name: "clean", message: "Clean before export?", default: true },
+      ]);
+      await exportWorkflows({ global: opts.global, ...answers });
+      continue;
+    }
+
     if (action === "import") {
       const { pathOrUrl } = await inquirer.prompt([
         {
           type: "input",
           name: "pathOrUrl",
-          message: "JSON file path or URL:",
+          message: "File path / URL / bundle.zip:",
           validate: (v) => (String(v || "").trim() ? true : "Required"),
         },
       ]);
 
-      // default = name inside JSON (download/read)
       const detectedName = await getWorkflowNameFromSource({ global: opts.global, pathOrUrl });
 
       const { name } = await inquirer.prompt([
-        {
-          type: "input",
-          name: "name",
-          message: "Workflow name:",
-          default: detectedName || "Imported workflow",
-        },
+        { type: "input", name: "name", message: "Workflow name:", default: detectedName || "Imported workflow" },
       ]);
 
-      await importWorkflows({ global: opts.global, pathOrUrl, clean: true, name: String(name || "").trim() });
-      continue;
-    }
-
-    if (action === "exportAll") {
-      const { out } = await inquirer.prompt([
-        { type: "input", name: "out", message: "Output folder:", default: "./exports" },
+      const { upsert } = await inquirer.prompt([
+        { type: "confirm", name: "upsert", message: "Upsert by name (update if exists)?", default: true },
       ]);
-      await exportWorkflows({ global: opts.global, all: true, out, clean: true });
+
+      await importWorkflows({
+        global: opts.global,
+        pathOrUrl,
+        name: String(name || "").trim(),
+        clean: true,
+        upsert,
+        dryRun: false,
+      });
       continue;
     }
   }

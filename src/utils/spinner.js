@@ -1,31 +1,17 @@
 import ora from "ora";
 
-/**
- * Spinner standardisé pour le CLI
- */
-export function createSpinner(text = "Chargement...") {
-  return ora({
-    text,
-    spinner: "dots",
-    color: "cyan",
-  });
+export function createSpinner(text) {
+  return ora({ text });
 }
 
-/**
- * Wrapper async avec spinner
- * - successText: texte optionnel au succeed()
- *
- * Usage:
- *   const data = await withSpinner("Chargement…", async () => {...}, "OK");
- */
-export async function withSpinner(text, fn, successText) {
-  const spinner = createSpinner(text).start();
+export async function withSpinner(text, fn, successText = "Done") {
+  const s = createSpinner(text).start();
   try {
-    const result = await fn(spinner);
-    spinner.succeed(successText || undefined);
-    return result;
-  } catch (err) {
-    spinner.fail();
-    throw err;
+    const res = await fn();
+    s.succeed(successText);
+    return res;
+  } catch (e) {
+    s.fail("Failed");
+    throw e;
   }
 }

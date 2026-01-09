@@ -1,17 +1,10 @@
 import http from "http";
-import { lookup } from "dns/promises";
 import os from "os";
 import { spawn, execFileSync } from "child_process";
 import { createN8nClient } from "../api/client.js";
 import { cleanWorkflow } from "../utils/cleanWorkflow.js";
-import { withSpinner, createSpinner } from "../utils/spinner.js";
-
-function idToFileBase(id) {
-  return String(id || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "");
-}
+import { createSpinner, withSpinner } from "../utils/spinner.js";
+import { copy } from "../utils/clipboard.js";
 
 function resolveCloudflaredPath(explicit) {
   const candidates = [
@@ -41,32 +34,12 @@ function getLocalIP() {
   return "127.0.0.1";
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-async function waitForDns(host, { timeoutMs = 3000, intervalMs = 200 } = {}) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      await lookup(host);
-      return true;
-    } catch {}
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return false;
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 export async function shareWorkflow(opts) {
-  const client = await createN8nClient({
-    url: opts.global.url,
-    key: opts.global.key,
-  });
+  const client = await createN8nClient(opts.global);
 
   const id = String(opts.id);
   const port = Number(opts.port || 3333);
@@ -74,14 +47,17 @@ export async function shareWorkflow(opts) {
 
   const workflow = await withSpinner(
     `Loading workflow #${id}…`,
-    async () => (await client.get(`/workflows/${id}`)).data,
+    async () => {
+      const { data } = await client.get(`/workflows/${id}`);
+      return data;
+    },
     "Workflow loaded"
   );
 
   const wf = opts.clean === false ? workflow : cleanWorkflow(workflow);
 
-  // ✅ file is always: /<id>.json (lowercase safe)
-  const fileBase = idToFileBase(id) || "workflow";
+  // Per your requirement: shared JSON filename uses workflow id (lowercase safe)
+  const fileBase = String(id).toLowerCase();
   const filePath = `/${fileBase}.json`;
   const json = JSON.stringify(wf, null, 2);
 
@@ -91,10 +67,8 @@ export async function shareWorkflow(opts) {
         res.writeHead(405);
         return res.end("Method Not Allowed");
       }
-
       const url = new URL(req.url, "http://localhost");
 
-      // Landing page
       if (url.pathname === "/") {
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
@@ -102,14 +76,12 @@ export async function shareWorkflow(opts) {
         });
         return res.end(`<html><body style="font-family:system-ui;padding:24px">
 <h2>n8n-cli share</h2>
-<p><b>Workflow:</b> ${escapeHtml(wf.name || "")}</p>
-<p><b>Download:</b> <a href="${filePath}">${fileBase}.json</a></p>
+<p>Workflow: <b>${wf.name || ""}</b></p>
+<p>Download: <a href="${filePath}">${fileBase}.json</a></p>
 </body></html>`);
       }
 
-      // Compare decoded pathname (safe against encoding)
-      const decodedPath = decodeURIComponent(url.pathname);
-      if (decodedPath !== filePath) {
+      if (decodeURIComponent(url.pathname) !== filePath) {
         res.writeHead(404);
         return res.end("Not Found");
       }
@@ -131,19 +103,13 @@ export async function shareWorkflow(opts) {
     server.listen(port, host, resolve);
   });
 
-  // Keep long-lived
-  server.requestTimeout = 0;
-  server.headersTimeout = 0;
-  server.keepAliveTimeout = 0;
-  server.timeout = 0;
-
   const localHost = host === "0.0.0.0" ? getLocalIP() : host;
   const localUrl = `http://${localHost}:${port}${filePath}`;
 
-  console.log(`\n📤 Sharing workflow: "${wf.name}"`);
-  console.log(`🆔 File: ${fileBase}.json`);
-  console.log("\n➡️ Local URL:");
+  console.log(`\n📤 Sharing workflow: "${wf.name}"\n`);
+  console.log("➡️ Local URL:");
   console.log("   " + localUrl);
+  await copy(localUrl);
 
   const wantTunnel =
     String(opts.tunnel || "cloudflare").toLowerCase() === "cloudflare";
@@ -151,12 +117,13 @@ export async function shareWorkflow(opts) {
 
   if (wantTunnel) {
     const exe = resolveCloudflaredPath(opts.cloudflared);
-
     if (!exe) {
       console.log("\n⚠️ cloudflared not found → local link only");
       console.log("   Install it or pass: --cloudflared <path>");
     } else {
-      const spin = createSpinner("Starting Cloudflare tunnel…").start();
+      const spin = createSpinner(
+        "Waiting for Cloudflare link (trycloudflare)…"
+      ).start();
 
       tunnelChild = spawn(
         exe,
@@ -166,49 +133,44 @@ export async function shareWorkflow(opts) {
         }
       );
 
-      let printed = false;
-
+      let base = null;
       const onData = (d) => {
-        if (printed) return;
-
-        const text = d.toString();
-        const m = text.match(/https:\/\/[\w-]+\.trycloudflare\.com/);
-        if (!m) return;
-
-        printed = true;
-        const base = m[0];
-        const publicUrl = base + filePath;
-
-        spin.succeed("Cloudflare URL received");
-        console.log("\n➡️ Public URL (Cloudflare):");
-        console.log("   " + publicUrl);
-
-        // ✅ DNS warmup (non bloquant, PAS de await direct)
-        (async () => {
-          try {
-            const host = new URL(publicUrl).hostname;
-            await waitForDns(host, { timeoutMs: 3000, intervalMs: 200 });
-          } catch {}
-        })();
+        const m = d.toString().match(/https:\/\/[\w-]+\.trycloudflare\.com/);
+        if (m && !base) base = m[0];
       };
 
       tunnelChild.stdout.on("data", onData);
       tunnelChild.stderr.on("data", onData);
 
-      tunnelChild.on("error", (e) => {
+      // Fast: show as soon as we capture URL, with minimal wait loop
+      (async () => {
         try {
-          spin.fail("Failed to start cloudflared");
-        } catch {}
+          for (let i = 0; i < 60 && !base; i++) await sleep(100);
+          if (!base)
+            throw new Error("No trycloudflare URL received (timeout).");
+          const publicUrl = base + filePath;
+
+          spin.succeed("Cloudflare link ready");
+          console.log("\n➡️ Public URL (Cloudflare):");
+          console.log("   " + publicUrl);
+          await copy(publicUrl);
+
+          console.log("\n(Links copied to clipboard)\n");
+          console.log("⏹️ Press CTRL+C to stop");
+        } catch (e) {
+          spin.fail("Cloudflare tunnel failed");
+          console.log("Details:", e?.message || e);
+          console.log("\n⏹️ Press CTRL+C to stop");
+        }
+      })();
+
+      tunnelChild.on("error", (e) => {
+        spin.fail("Failed to start cloudflared");
         console.log("Details:", e?.message || e);
       });
 
-      tunnelChild.on("exit", (code) => {
-        if (!printed) {
-          try {
-            spin.fail("cloudflared exited before URL");
-          } catch {}
-          console.log("Exit code:", code);
-        }
+      tunnelChild.on("exit", () => {
+        // no-op
       });
     }
   }
@@ -220,6 +182,5 @@ export async function shareWorkflow(opts) {
     server.close(() => process.exit(0));
   });
 
-  // Stay on links screen forever
   await new Promise(() => {});
 }

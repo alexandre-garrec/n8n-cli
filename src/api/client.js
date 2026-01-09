@@ -13,3 +13,8 @@ export async function createN8nClient(globalOpts = {}) {
     },
   });
 }
+
+export async function getResolvedCreds(globalOpts = {}) {
+  const creds = await resolveCredentials(globalOpts);
+  return creds;
+}

@@ -1,186 +1,219 @@
-import path from "path";
-import { createN8nClient } from "../api/client.js";
-import { cleanWorkflow } from "../utils/cleanWorkflow.js";
-import { writeJson, ensureDir } from "../utils/io.js";
-import {
-  pickWorkflow,
-  pickActionAfterSelect,
-  confirm,
-  askEditDefaults,
-} from "../utils/prompt.js";
-import {
-  printHeader,
-  printWorkflowLine,
-  printOk,
-  printWarn,
-  printErr,
-  printInfo,
-} from "../utils/format.js";
+import inquirer from "inquirer";
+import chalk from "chalk";
+import open from "open";
+import { createN8nClient, getResolvedCreds } from "../api/client.js";
 import { createSpinner, withSpinner } from "../utils/spinner.js";
+import { exportWorkflows } from "./export.js";
+import { deleteWorkflows } from "./delete.js";
+import { editWorkflow } from "./edit.js";
 import { shareWorkflow } from "./share.js";
+import { copy } from "../utils/clipboard.js";
 
-export async function uiWorkflows(opts) {
-  const client = await createN8nClient({
-    url: opts.global.url,
-    key: opts.global.key,
-  });
-  const search = (opts.search || "").toLowerCase().trim();
-
-  while (true) {
-    const workflows = await withSpinner(
-      "Loading workflows…",
-      async () => {
-        const { data } = await client.get("/workflows");
-        const list = data?.data || data || [];
-        return list.sort((a, b) =>
-          String(a.name || "").localeCompare(String(b.name || ""), "en", {
-            sensitivity: "base",
-          })
-        );
-      },
-      "Workflows loaded"
-    );
-
-    const filtered = search
-      ? workflows.filter((w) =>
-          String(w.name || "")
-            .toLowerCase()
-            .includes(search)
-        )
-      : workflows;
-
-    // printHeader(`📄 Workflows (${filtered.length})`);
-    // filtered.slice(0, 20).forEach(printWorkflowLine);
-    if (filtered.length > 20)
-      printInfo(`… and ${filtered.length - 20} more (use --search)`);
-
-    if (!filtered.length) {
-      printWarn("No workflows found. Try another filter.");
-      return;
-    }
-
-    const picked = await pickWorkflow(filtered, {
-      message: "Select a workflow",
-    });
-    if (!picked) return;
-
-    const action = await pickActionAfterSelect();
-    if (action === "quit") return;
-    if (action === "back") continue;
-
-    const full = await withSpinner(
-      `Loading "${picked.name}"…`,
-      async () => {
-        const { data } = await client.get(`/workflows/${picked.id}`);
-        return data;
-      },
-      "Workflow loaded"
-    );
-
-    if (action === "delete") {
-      const ok = await confirm(
-        `Delete "${picked.name}" (#${picked.id})?`,
-        false
-      );
-      if (!ok) continue;
-
-      const s = createSpinner(`Deleting: ${picked.name}`).start();
-      try {
-        await client.delete(`/workflows/${picked.id}`);
-        s.succeed(`Deleted: ${picked.name}`);
-        printOk("Done");
-      } catch (err) {
-        s.fail(`Delete failed: ${picked.name}`);
-        printErr(err?.response?.data || err.message);
-      }
-      continue;
-    }
-
-    if (action === "export") {
-      const folder = path.resolve("exports");
-      await ensureDir(folder);
-
-      const s = createSpinner(`Exporting: ${picked.name}`).start();
-      try {
-        const wf = cleanWorkflow(full);
-        const file = path.join(
-          folder,
-          `${safeName(picked.name)}__${picked.id}.json`
-        );
-        await writeJson(file, wf);
-        s.succeed("Export complete");
-        printOk(`Saved: ${file}`);
-      } catch (err) {
-        s.fail("Export failed");
-        printErr(err?.response?.data || err.message);
-      }
-      continue;
-    }
-
-    if (action === "edit") {
-      const changes = await askEditDefaults({
-        id: picked.id,
-        name: picked.name,
-        active: picked.active,
-      });
-
-      const base = cleanWorkflow(full);
-      const payload = { ...base, name: changes.name, active: changes.active };
-
-      const ok = await confirm(`Apply changes to "${picked.name}"?`, true);
-      if (!ok) continue;
-
-      const s = createSpinner(`Updating: ${picked.name}`).start();
-      try {
-        await client.put(`/workflows/${picked.id}`, payload);
-        s.succeed("Update complete");
-        printOk(`Updated: ${changes.name} (#${picked.id})`);
-      } catch (err) {
-        s.stop();
-        printWarn("Update with 'active' failed, retrying without 'active'…");
-        const retryPayload = { ...payload };
-        delete retryPayload.active;
-
-        const s2 = createSpinner(`Retry update: ${picked.name}`).start();
-        try {
-          await client.put(`/workflows/${picked.id}`, retryPayload);
-          s2.succeed("Update complete (without active)");
-          printOk(`Updated (without active): ${changes.name} (#${picked.id})`);
-        } catch (err2) {
-          s2.fail("Update failed");
-          printErr(err2?.response?.data || err2.message);
-        }
-      }
-      continue;
-    }
-
-    if (action === "share") {
-      // ✅ Zero questions. Defaults:
-      // - port 3333
-      // - bind 127.0.0.1
-      // - tunnel cloudflare
-      // - clean true
-      await shareWorkflow({
-        global: opts.global,
-        id: picked.id,
-        port: "3333",
-        public: false,
-        clean: true,
-        tunnel: "cloudflare",
-        // name undefined => workflow name by default
-      });
-
-      // IMPORTANT: Do not redraw menu or list after links are shown.
-      // shareWorkflow keeps the process alive until Ctrl+C.
-      return;
-    }
-  }
+function asArrayData(resp) {
+  return resp?.data?.data || resp?.data || [];
 }
 
-function safeName(name = "workflow") {
-  return String(name)
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+function short(w) {
+  return `#${w.id} ${w.name} ${w.active ? "✅" : "⭕"}`;
+}
+
+export async function uiWorkflows(opts) {
+  const client = await createN8nClient(opts.global);
+  const creds = await getResolvedCreds(opts.global);
+
+  const list = await withSpinner(
+    "Loading workflows…",
+    async () => {
+      const res = await client.get("/workflows");
+      return asArrayData(res);
+    },
+    "Loaded"
+  );
+
+  let workflows = list;
+
+  // "recent" mode: keep latest updated first if field exists
+  if (opts.recent) {
+    workflows = [...workflows]
+      .sort((a, b) => {
+        const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return tb - ta;
+      })
+      .slice(0, 30);
+  }
+
+  if (opts.search) {
+    const q = String(opts.search).toLowerCase();
+    workflows = workflows.filter((w) =>
+      String(w.name || "")
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  if (!workflows.length) {
+    console.log(chalk.yellow("No workflows."));
+    return;
+  }
+
+  const { picked } = await inquirer.prompt([
+    {
+      type: "list",
+      name: "picked",
+      message: "Select a workflow",
+      pageSize: 18,
+      choices: workflows.map((w) => ({ name: short(w), value: w })),
+    },
+  ]);
+
+  const w = picked;
+
+  // Preview / summary
+  console.log(
+    "\n" + chalk.cyan("Selected: ") + chalk.white(`#${w.id} ${w.name}`)
+  );
+  console.log(
+    chalk.gray("Active: ") +
+      (w.active ? chalk.green("true") : chalk.red("false"))
+  );
+  if (w.updatedAt)
+    console.log(chalk.gray("Updated: ") + chalk.white(String(w.updatedAt)));
+
+  const { action } = await inquirer.prompt([
+    {
+      type: "list",
+      name: "action",
+      message: "Action",
+      choices: [
+        { name: "🌐 Open in browser", value: "open" },
+        { name: "📦 Export this workflow", value: "export" },
+        // { name: "✏️ Rename / Toggle active", value: "edit" },
+        { name: "🗑️ Delete (with backup)", value: "delete" },
+        { name: "🔗 Share (local + Cloudflare)", value: "share" },
+        new inquirer.Separator(),
+        { name: "⬅ Back", value: "back" },
+      ],
+    },
+  ]);
+
+  if (action === "back") return;
+
+  if (action === "open") {
+    // 1) Determine UI base url:
+    // - prefer uiBaseUrl from Settings
+    // - otherwise derive from API base url by stripping /api/v1 (or /api)
+    let base = String(creds.uiBaseUrl || "").trim();
+
+    if (!base) {
+      const api = String(creds.url || "").trim(); // API base URL
+      if (api) {
+        base = api
+          .replace(/\/api\/v1\/?$/i, "")
+          .replace(/\/api\/?$/i, "")
+          .replace(/\/+$/, "");
+      }
+    }
+
+    if (!base) {
+      console.log(
+        chalk.yellow("UI Base URL not set and could not be derived.")
+      );
+      console.log(
+        chalk.gray("Go to Settings → UI Base URL (e.g. http://localhost:5678)")
+      );
+      return;
+    }
+
+    base = base.replace(/\/+$/, "");
+
+    // 2) Try multiple common n8n editor routes (varies by version/setup)
+    const candidates = [
+      `${base}/workflow/${w.id}`,
+      `${base}/#/workflow/${w.id}`,
+      `${base}/#/workflows/${w.id}`,
+    ];
+
+    const url = candidates[0];
+
+    const spin = createSpinner("Opening in browser…").start();
+    try {
+      // Try opening first candidate; if it fails, still print candidates
+      await open(url);
+      spin.succeed("Opened");
+      console.log(chalk.green("✅ Opened: ") + url);
+
+      // Copy to clipboard as a fallback convenience
+      const ok = await copy(url);
+      if (ok) console.log(chalk.gray("📋 Copied to clipboard."));
+    } catch (e) {
+      spin.fail("Could not open browser automatically");
+      console.log(chalk.yellow("Try opening manually:"));
+      for (const u of candidates) console.log(" - " + u);
+
+      // Copy best guess
+      await copy(url);
+      console.log(chalk.gray("📋 Best guess copied to clipboard."));
+      console.log(chalk.gray("Details: ") + (e?.message || e));
+    }
+
+    return;
+  }
+
+  if (action === "edit") {
+    const ans = await inquirer.prompt([
+      {
+        type: "input",
+        name: "name",
+        message: "New name (leave empty to keep):",
+        default: w.name,
+      },
+      {
+        type: "confirm",
+        name: "toggle",
+        message: "Toggle active?",
+        default: false,
+      },
+      { type: "confirm", name: "dryRun", message: "Dry-run?", default: false },
+    ]);
+    await editWorkflow({
+      global: opts.global,
+      id: String(w.id),
+      name: ans.name && ans.name.trim() ? ans.name.trim() : undefined,
+      active: ans.toggle ? String(!w.active) : undefined,
+      dryRun: ans.dryRun,
+    });
+    return;
+  }
+
+  if (action === "delete") {
+    const ans = await inquirer.prompt([
+      {
+        type: "confirm",
+        name: "confirm",
+        message: `Delete "${w.name}"?`,
+        default: false,
+      },
+      { type: "confirm", name: "dryRun", message: "Dry-run?", default: false },
+    ]);
+    if (!ans.confirm) return;
+    await deleteWorkflows({
+      global: opts.global,
+      id: String(w.id),
+      dryRun: ans.dryRun,
+    });
+    return;
+  }
+
+  if (action === "share") {
+    await shareWorkflow({
+      global: opts.global,
+      id: String(w.id),
+      port: 3333,
+      public: false,
+      clean: true,
+      tunnel: "cloudflare",
+    });
+    return;
+  }
 }

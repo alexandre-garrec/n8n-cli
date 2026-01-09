@@ -1,9 +1,13 @@
 import { promises as fs } from "fs";
+import path from "path";
 import axios from "axios";
 import { lookup } from "dns/promises";
+import fg from "fast-glob";
 import { createSpinner, withSpinner } from "../utils/spinner.js";
 import { cleanWorkflow } from "../utils/cleanWorkflow.js";
 import { createN8nClient } from "../api/client.js";
+import { backupWorkflowJson } from "../utils/backup.js";
+import { unzipToTemp } from "../utils/zip.js";
 
 function isUrl(s) {
   try {
@@ -13,7 +17,6 @@ function isUrl(s) {
     return false;
   }
 }
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function waitForDns(host, { timeoutMs = 6000, intervalMs = 250 } = {}) {
@@ -56,17 +59,30 @@ async function readJsonFile(fp) {
   return JSON.parse(await fs.readFile(fp, "utf-8"));
 }
 
+function looksZip(p) {
+  return String(p || "").toLowerCase().endsWith(".zip");
+}
+
 export async function getWorkflowNameFromSource({ global, pathOrUrl }) {
   try {
-    if (isUrl(pathOrUrl)) {
-      const json = await downloadJsonWithRetry(pathOrUrl);
+    const src = String(pathOrUrl || "").trim();
+    if (!src) return "";
+    if (isUrl(src)) {
+      const json = await downloadJsonWithRetry(src);
       return String(json?.name || "").trim();
     }
-    const json = await readJsonFile(pathOrUrl);
+    if (looksZip(src)) return "";
+    const json = await readJsonFile(src);
     return String(json?.name || "").trim();
   } catch {
     return "";
   }
+}
+
+async function findExistingByName(client, name) {
+  const { data } = await client.get("/workflows");
+  const list = data?.data || data || [];
+  return list.find((w) => String(w.name || "").trim() === String(name || "").trim());
 }
 
 export async function importWorkflows(opts) {
@@ -75,23 +91,68 @@ export async function importWorkflows(opts) {
   const src = String(opts.pathOrUrl || "").trim();
   if (!src) throw new Error("Import failed: pathOrUrl is required");
 
-  const chosenName = String(opts.name || "").trim();
+  const clean = opts.clean !== false;
+  const upsert = !!opts.upsert;
+  const dryRun = !!opts.dryRun;
 
-  const raw = await withSpinner(
-    isUrl(src) ? "Downloading workflow…" : "Reading workflow…",
-    async () => (isUrl(src) ? await downloadJsonWithRetry(src) : await readJsonFile(src)),
-    "Loaded"
-  );
+  // Load items (single json, url json, or zip bundle)
+  let items = [];
+  if (isUrl(src)) {
+    const raw = await withSpinner("Downloading workflow JSON…", () => downloadJsonWithRetry(src), "Downloaded");
+    items = [raw];
+  } else if (looksZip(src)) {
+    const tmpDir = path.join(process.cwd(), ".tmp_n8ncli_import");
+    await withSpinner("Extracting bundle.zip…", () => unzipToTemp(src, tmpDir), "Extracted");
+    const files = await fg(["**/*.json"], { cwd: tmpDir, absolute: true });
+    for (const f of files) items.push(await readJsonFile(f));
+  } else {
+    items = [await readJsonFile(src)];
+  }
 
-  const finalName = chosenName || String(raw?.name || "").trim() || "Imported workflow";
-  const wf = cleanWorkflow({ ...raw, name: finalName });
+  for (const raw of items) {
+    const nameFromJson = String(raw?.name || "").trim();
+    const finalName = String(opts.name || "").trim() || nameFromJson || "Imported workflow";
 
-  const spin = createSpinner(`Importing (POST): ${finalName}`).start();
-  try {
-    const res = await client.post("/workflows", wf);
-    spin.succeed(`Created: ${finalName} (#${res.data?.id ?? "?"})`);
-  } catch (e) {
-    spin.fail("Import failed");
-    console.error(e?.response?.data || e.message);
+    const wf0 = clean ? cleanWorkflow({ ...raw, name: finalName }) : { ...raw, name: finalName };
+
+    // Upsert by name
+    let existing = null;
+    if (upsert) {
+      existing = await withSpinner(`Looking for existing workflow: "${finalName}"…`, () => findExistingByName(client, finalName), "Checked");
+    }
+
+    if (existing) {
+      // backup existing before overwrite
+      const { data: old } = await client.get(`/workflows/${existing.id}`);
+      const backupPath = await backupWorkflowJson({ id: existing.id, name: old?.name, json: old });
+
+      if (dryRun) {
+        console.log(`🟡 DRY-RUN: would UPDATE #${existing.id} "${finalName}" (backup: ${backupPath})`);
+        continue;
+      }
+
+      const spin = createSpinner(`Updating: ${finalName} (#${existing.id})`).start();
+      try {
+        await client.put(`/workflows/${existing.id}`, wf0);
+        spin.succeed(`Updated: ${finalName} (#${existing.id}) — backup saved`);
+      } catch (e) {
+        spin.fail("Update failed");
+        console.error(e?.response?.data || e.message);
+      }
+    } else {
+      if (dryRun) {
+        console.log(`🟡 DRY-RUN: would CREATE "${finalName}"`);
+        continue;
+      }
+
+      const spin = createSpinner(`Creating: ${finalName}`).start();
+      try {
+        const res = await client.post("/workflows", wf0);
+        spin.succeed(`Created: ${finalName} (#${res.data?.id ?? "?"})`);
+      } catch (e) {
+        spin.fail("Create failed");
+        console.error(e?.response?.data || e.message);
+      }
+    }
   }
 }

@@ -1,61 +1,57 @@
+import { promises as fs } from "fs";
 import path from "path";
+import fg from "fast-glob";
 import { createN8nClient } from "../api/client.js";
-import { ensureDir, writeJson } from "../utils/io.js";
 import { cleanWorkflow } from "../utils/cleanWorkflow.js";
-import { createSpinner, withSpinner } from "../utils/spinner.js";
+import { withSpinner, createSpinner } from "../utils/spinner.js";
+import { zipJsonFiles } from "../utils/zip.js";
 
-export async function exportWorkflows(opts) {
-  const client = await createN8nClient({ url: opts.global.url, key: opts.global.key });
-
-  const out = opts.out || "./exports";
-  const isAll = !!opts.all;
-
-  if (!isAll && !opts.id) throw new Error("Export: donne un id ou utilise --all.");
-
-  if (isAll) {
-    const workflows = await withSpinner("Chargement des workflows…", async () => {
-      const { data } = await client.get("/workflows");
-      return data?.data || data || [];
-    }, "Workflows chargés");
-
-    await ensureDir(out);
-
-    console.log(`📦 Export de ${workflows.length} workflow(s) vers ${out}`);
-    for (const w of workflows) {
-      const s = createSpinner(`Export: ${w.name}`).start();
-      try {
-        const { data: full } = await client.get(`/workflows/${w.id}`);
-        const wf = opts.clean ? cleanWorkflow(full) : full;
-        const file = path.join(out, `${safeName(w.name)}__${w.id}.json`);
-        await writeJson(file, wf);
-        s.succeed(`${w.name} -> ${file}`);
-      } catch (err) {
-        s.fail(`Erreur export: ${w.name}`);
-        console.error(err?.response?.data || err.message);
-      }
-    }
-    return;
-  }
-
-  const wfFull = await withSpinner(`Chargement workflow #${opts.id}…`, async () => {
-    const { data } = await client.get(`/workflows/${opts.id}`);
-    return data;
-  }, "Workflow chargé");
-
-  const wf = opts.clean ? cleanWorkflow(wfFull) : wfFull;
-
-  const filePath = out.toLowerCase().endsWith(".json")
-    ? out
-    : path.join(out, `${safeName(wf.name)}__${wf.id || opts.id}.json`);
-
-  await writeJson(filePath, wf);
-  console.log(`✅ Exporté: ${wf.name} -> ${filePath}`);
+async function ensureDir(p) {
+  await fs.mkdir(p, { recursive: true });
 }
 
-function safeName(name = "workflow") {
-  return String(name)
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+function asArrayData(resp) {
+  return resp?.data?.data || resp?.data || [];
+}
+
+export async function exportWorkflows(opts) {
+  const client = await createN8nClient(opts.global);
+
+  const out = String(opts.out || "./exports");
+  const clean = opts.clean !== false;
+  const all = !!opts.all;
+  const bundle = !!opts.bundle;
+
+  await ensureDir(out);
+
+  const list = await withSpinner("Loading workflows…", async () => {
+    const res = await client.get("/workflows");
+    return asArrayData(res);
+  }, "Loaded");
+
+  const chosen = all ? list : list; // (UI selection is handled in ui.js; CLI export can be extended)
+
+  const files = [];
+  for (const w of chosen) {
+    const { data: full } = await client.get(`/workflows/${w.id}`);
+    const wf = clean ? cleanWorkflow(full) : full;
+    const fileName = `${w.id}.json`;
+    const filePath = path.join(out, fileName);
+    await fs.writeFile(filePath, JSON.stringify(wf, null, 2), "utf-8");
+    files.push({ name: fileName, path: filePath });
+  }
+
+  if (bundle) {
+    const zipPath = path.join(out, "bundle.zip");
+    const spin = createSpinner("Creating bundle.zip…").start();
+    try {
+      await zipJsonFiles(zipPath, files.map(f => ({ name: f.name, path: f.path })));
+      spin.succeed(`bundle.zip created: ${zipPath}`);
+    } catch (e) {
+      spin.fail("bundle.zip failed");
+      console.error(e?.message || e);
+    }
+  }
+
+  console.log(`\n✅ Exported ${files.length} workflow(s) to: ${out}\n`);
 }

@@ -1,45 +1,59 @@
+import chalk from "chalk";
 import { createN8nClient } from "../api/client.js";
-import { createSpinner, withSpinner } from "../utils/spinner.js";
+import { withSpinner, createSpinner } from "../utils/spinner.js";
+import { backupWorkflowJson } from "../utils/backup.js";
+
+function asArrayData(resp) {
+  return resp?.data?.data || resp?.data || [];
+}
 
 export async function deleteWorkflows(opts) {
-  const client = await createN8nClient({ url: opts.global.url, key: opts.global.key });
+  const client = await createN8nClient(opts.global);
 
-  const workflows = await withSpinner("Chargement des workflows…", async () => {
-    const { data } = await client.get("/workflows");
-    return data?.data || data || [];
-  }, "Workflows chargés");
+  const id = opts.id ? String(opts.id).trim() : "";
+  const dryRun = !!opts.dryRun;
 
-  const id = opts.id ? String(opts.id) : null;
-  const name = opts.name ? String(opts.name) : null;
-  const search = opts.search ? String(opts.search).toLowerCase() : null;
+  const list = await withSpinner("Loading workflows…", async () => {
+    const res = await client.get("/workflows");
+    return asArrayData(res);
+  }, "Loaded");
 
   let targets = [];
-  if (id) targets = workflows.filter((w) => String(w.id) === id);
-  else if (name) targets = workflows.filter((w) => String(w.name) === name);
-  else if (search) targets = workflows.filter((w) => String(w.name || "").toLowerCase().includes(search));
-  else throw new Error("Spécifie un id, ou --name, ou --search.");
 
-  if (!targets.length) {
-    console.log("🤷 Aucun workflow trouvé.");
+  if (id) {
+    const t = list.find((w) => String(w.id) === id);
+    if (t) targets = [t];
+  } else if (opts.name) {
+    targets = list.filter((w) => String(w.name || "") === String(opts.name));
+  } else if (opts.search) {
+    const q = String(opts.search).toLowerCase();
+    targets = list.filter((w) => String(w.name || "").toLowerCase().includes(q));
+  } else {
+    console.log(chalk.yellow("Nothing to delete. Provide id OR --name OR --search."));
     return;
   }
 
-  console.log(`🧨 Cible(s): ${targets.length}`);
-  for (const w of targets) console.log(`- ${w.id} ${w.name}`);
-
-  if (opts.dryRun) {
-    console.log("✅ dry-run: aucune suppression effectuée.");
+  if (!targets.length) {
+    console.log(chalk.yellow("No matching workflows."));
     return;
   }
 
   for (const w of targets) {
-    const s = createSpinner(`Suppression: ${w.name}`).start();
+    const { data: full } = await client.get(`/workflows/${w.id}`);
+    const backupPath = await backupWorkflowJson({ id: w.id, name: full?.name, json: full });
+
+    if (dryRun) {
+      console.log(`🟡 DRY-RUN: would DELETE #${w.id} "${w.name}" (backup: ${backupPath})`);
+      continue;
+    }
+
+    const spin = createSpinner(`Deleting #${w.id} "${w.name}"…`).start();
     try {
       await client.delete(`/workflows/${w.id}`);
-      s.succeed(`Supprimé: ${w.name}`);
-    } catch (err) {
-      s.fail(`Erreur suppression: ${w.name}`);
-      console.error(err?.response?.data || err.message);
+      spin.succeed(`Deleted #${w.id} — backup saved`);
+    } catch (e) {
+      spin.fail("Delete failed");
+      console.error(e?.response?.data || e.message);
     }
   }
 }

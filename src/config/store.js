@@ -10,12 +10,20 @@ async function ensureDir() {
   await fs.mkdir(paths.config, { recursive: true });
 }
 
+export function getConfigPath() {
+  return CONFIG_FILE;
+}
+
 export async function readConfig() {
   try {
-    const txt = await fs.readFile(CONFIG_FILE, "utf-8");
-    return JSON.parse(txt);
+    return JSON.parse(await fs.readFile(CONFIG_FILE, "utf-8"));
   } catch {
-    return {};
+    return {
+      activeProfile: "default",
+      profiles: {
+        default: { url: "", key: "", uiBaseUrl: "" }
+      }
+    };
   }
 }
 
@@ -31,6 +39,11 @@ export async function updateConfig(patch) {
   return next;
 }
 
-export function getConfigPath() {
-  return CONFIG_FILE;
+export async function ensureProfile(profile) {
+  const cfg = await readConfig();
+  cfg.profiles = cfg.profiles || {};
+  if (!cfg.profiles[profile]) cfg.profiles[profile] = { url: "", key: "", uiBaseUrl: "" };
+  if (!cfg.activeProfile) cfg.activeProfile = profile;
+  await writeConfig(cfg);
+  return cfg;
 }

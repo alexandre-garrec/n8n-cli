@@ -1,5 +1,37 @@
-node_modules
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
 .env
-dist
-exports
+.env.*
+!.env.example
+
+# Build / cache
+dist/
+build/
+coverage/
+.cache/
+.vscode/
+.idea/
+
+# Exports / temp
+exports/
+tmp/
+temp/
+*.zip
+.tmp_n8ncli_import/
+
+# Local backups created by patch scripts
+**/*.bak
+
+# Logs
+logs/
 *.log

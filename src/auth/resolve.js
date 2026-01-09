@@ -1,29 +1,37 @@
-import { readConfig } from "../config/store.js";
+import { readConfig, ensureProfile } from "../config/store.js";
+
+export async function resolveProfile(globalOpts = {}) {
+  const cfg = await readConfig();
+  const fromFlag = (globalOpts.profile || "").trim();
+  const profile = fromFlag || cfg.activeProfile || "default";
+  await ensureProfile(profile);
+  return profile;
+}
 
 export async function resolveCredentials(globalOpts = {}) {
-  // 1) CLI flags
+  const profile = await resolveProfile(globalOpts);
+  const cfg = await readConfig();
+  const p = cfg.profiles?.[profile] || {};
+
+  // 1) flags
   const urlFlag = (globalOpts.url || "").trim();
   const keyFlag = (globalOpts.key || "").trim();
 
-  // 2) Environment variables (good for CI/Docker)
+  // 2) env (optionally per profile)
   const urlEnv = (process.env.N8N_URL || "").trim();
   const keyEnv = (process.env.N8N_API_KEY || "").trim();
 
-  // 3) Saved config (Settings menu)
-  const cfg = await readConfig();
-  const urlCfg = (cfg.url || "").trim();
-  const keyCfg = (cfg.key || "").trim();
+  // 3) config profile
+  const urlCfg = (p.url || "").trim();
+  const keyCfg = (p.key || "").trim();
 
   const url = urlFlag || urlEnv || urlCfg || "";
   const key = keyFlag || keyEnv || keyCfg || "";
 
-  const source =
-    urlFlag || keyFlag ? "flags" :
-    urlEnv || keyEnv ? "env" :
-    urlCfg || keyCfg ? "config" :
-    "none";
+  const uiBaseUrl = (p.uiBaseUrl || "").trim(); // for "open in browser"
+  const source = urlFlag || keyFlag ? "flags" : urlEnv || keyEnv ? "env" : urlCfg || keyCfg ? "config" : "none";
 
-  return { url, key, source };
+  return { url, key, profile, uiBaseUrl, source };
 }
 
 export function assertCredentials({ url, key }) {

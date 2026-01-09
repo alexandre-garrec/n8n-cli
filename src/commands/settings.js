@@ -1,18 +1,19 @@
 import inquirer from "inquirer";
 import chalk from "chalk";
-import { readConfig, updateConfig, getConfigPath } from "../config/store.js";
-import { resolveCredentials } from "../auth/resolve.js";
+import { readConfig, writeConfig, ensureProfile, getConfigPath } from "../config/store.js";
+import { getResolvedCreds, createN8nClient } from "../api/client.js";
 import { createSpinner } from "../utils/spinner.js";
-import { createN8nClient } from "../api/client.js";
 
 export async function settingsMenu({ global }) {
   const cfg = await readConfig();
-  const resolved = await resolveCredentials(global);
+  const creds = await getResolvedCreds(global);
 
   console.log(chalk.gray("\nConfig file: ") + chalk.cyan(getConfigPath()));
-  console.log(chalk.gray("Active source: ") + chalk.cyan(resolved.source));
-  console.log(chalk.gray("URL: ") + chalk.cyan(resolved.url || "(not set)"));
-  console.log(chalk.gray("API Key: ") + chalk.cyan(resolved.key ? "********" : "(not set)"));
+  console.log(chalk.gray("Active profile: ") + chalk.cyan(creds.profile));
+  console.log(chalk.gray("Active source: ") + chalk.cyan(creds.source));
+  console.log(chalk.gray("URL: ") + chalk.cyan(creds.url || "(not set)"));
+  console.log(chalk.gray("API Key: ") + chalk.cyan(creds.key ? "********" : "(not set)"));
+  console.log(chalk.gray("UI Base URL: ") + chalk.cyan(creds.uiBaseUrl || "(optional)"));
 
   const { action } = await inquirer.prompt([
     {
@@ -20,9 +21,12 @@ export async function settingsMenu({ global }) {
       name: "action",
       message: "Settings",
       choices: [
-        { name: "🔐 Configure n8n credentials", value: "creds" },
+        { name: "🧾 Switch profile", value: "switch" },
+        { name: "➕ Create profile", value: "create" },
+        { name: "🔐 Configure credentials (for active profile)", value: "creds" },
+        { name: "🌐 Configure UI Base URL (for 'Open in browser')", value: "ui" },
         { name: "🧪 Test connection", value: "test" },
-        { name: "🧹 Clear saved credentials", value: "clear" },
+        { name: "🧹 Clear credentials (active profile)", value: "clear" },
         { name: "⬅ Back", value: "back" },
       ],
     },
@@ -30,13 +34,40 @@ export async function settingsMenu({ global }) {
 
   if (action === "back") return;
 
+  if (action === "switch") {
+    const cfg2 = await readConfig();
+    const profiles = Object.keys(cfg2.profiles || {});
+    const { p } = await inquirer.prompt([
+      { type: "list", name: "p", message: "Select active profile", choices: profiles.length ? profiles : ["default"] },
+    ]);
+    cfg2.activeProfile = p;
+    await writeConfig(cfg2);
+    console.log(chalk.green("\n✅ Active profile updated."));
+    return;
+  }
+
+  if (action === "create") {
+    const { p } = await inquirer.prompt([
+      { type: "input", name: "p", message: "New profile name:", default: "staging" },
+    ]);
+    await ensureProfile(String(p || "default").trim());
+    const cfg2 = await readConfig();
+    cfg2.activeProfile = String(p || "default").trim();
+    await writeConfig(cfg2);
+    console.log(chalk.green("\n✅ Profile created & selected."));
+    return;
+  }
+
   if (action === "creds") {
+    const cfg2 = await readConfig();
+    const p = cfg2.activeProfile || "default";
+    const current = cfg2.profiles?.[p] || {};
     const answers = await inquirer.prompt([
       {
         type: "input",
         name: "url",
         message: "n8n API base URL (ex: http://localhost:5678/api/v1):",
-        default: cfg.url || resolved.url || "",
+        default: current.url || "",
         validate: (v) => (String(v || "").trim() ? true : "Required"),
       },
       {
@@ -44,19 +75,42 @@ export async function settingsMenu({ global }) {
         name: "key",
         message: "n8n API key:",
         mask: "*",
-        default: cfg.key || resolved.key || "",
+        default: current.key || "",
         validate: (v) => (String(v || "").trim() ? true : "Required"),
       },
     ]);
 
-    await updateConfig({ url: answers.url.trim(), key: answers.key.trim() });
-    console.log(chalk.green("\n✅ Credentials saved."));
+    cfg2.profiles[p] = { ...current, url: answers.url.trim(), key: answers.key.trim() };
+    await writeConfig(cfg2);
+    console.log(chalk.green("\n✅ Credentials saved for profile: ") + chalk.cyan(p));
+    return;
+  }
+
+  if (action === "ui") {
+    const cfg2 = await readConfig();
+    const p = cfg2.activeProfile || "default";
+    const current = cfg2.profiles?.[p] || {};
+    const answers = await inquirer.prompt([
+      {
+        type: "input",
+        name: "uiBaseUrl",
+        message: "UI Base URL (ex: http://localhost:5678):",
+        default: current.uiBaseUrl || "",
+      },
+    ]);
+    cfg2.profiles[p] = { ...current, uiBaseUrl: answers.uiBaseUrl.trim() };
+    await writeConfig(cfg2);
+    console.log(chalk.green("\n✅ UI Base URL saved."));
     return;
   }
 
   if (action === "clear") {
-    await updateConfig({ url: "", key: "" });
-    console.log(chalk.green("\n✅ Saved credentials cleared."));
+    const cfg2 = await readConfig();
+    const p = cfg2.activeProfile || "default";
+    const current = cfg2.profiles?.[p] || {};
+    cfg2.profiles[p] = { ...current, url: "", key: "" };
+    await writeConfig(cfg2);
+    console.log(chalk.green("\n✅ Cleared credentials for profile: ") + chalk.cyan(p));
     return;
   }
 

@@ -1,52 +1,40 @@
+import chalk from "chalk";
 import { createN8nClient } from "../api/client.js";
-import { cleanWorkflow } from "../utils/cleanWorkflow.js";
+import { createSpinner } from "../utils/spinner.js";
+import { backupWorkflowJson } from "../utils/backup.js";
 
-/**
- * Édition "simple" via API:
- * - rename
- * - active true/false
- *
- * n8n API: GET /workflows/:id puis PUT /workflows/:id
- */
 export async function editWorkflow(opts) {
-  const client = await createN8nClient({ url: opts.global.url, key: opts.global.key });
+  const client = await createN8nClient(opts.global);
 
-  const id = String(opts.id);
-  const { data: current } = await client.get(`/workflows/${id}`);
+  const id = String(opts.id || "").trim();
+  if (!id) throw new Error("Missing workflow id");
 
-  // On part d'un workflow "importable"
-  const base = cleanWorkflow(current);
+  const dryRun = !!opts.dryRun;
 
-  let active = current.active;
-  if (typeof opts.active === "string") {
-    const v = opts.active.toLowerCase().trim();
-    active = v === "true" || v === "1" || v === "yes" || v === "y";
-  } else if (typeof opts.active === "boolean") {
-    active = opts.active;
+  const { data: wf } = await client.get(`/workflows/${id}`);
+  const backupPath = await backupWorkflowJson({ id, name: wf?.name, json: wf });
+
+  const patch = {};
+  if (opts.name) patch.name = String(opts.name);
+  if (opts.active !== undefined) patch.active = String(opts.active) === "true";
+
+  if (!Object.keys(patch).length) {
+    console.log(chalk.yellow("Nothing to edit. Provide --name or --active true/false"));
+    return;
   }
 
-  const payload = {
-    ...base,
-    name: (opts.name ? String(opts.name).trim() : base.name) || base.name,
-    // Certains n8n acceptent active dans PUT, d'autres via endpoint dédié.
-    // On l'envoie quand même; si ton n8n refuse, tu pourras gérer avec un endpoint "activate".
-    active,
-  };
+  if (dryRun) {
+    console.log(`🟡 DRY-RUN: would UPDATE #${id} (backup: ${backupPath})`);
+    console.log(patch);
+    return;
+  }
 
+  const spin = createSpinner(`Updating #${id}…`).start();
   try {
-    const { data: updated } = await client.put(`/workflows/${id}`, payload);
-    console.log(`✅ Workflow mis à jour: ${updated?.name ?? payload.name} (#${id})`);
-  } catch (err) {
-    // fallback: si active plante, on retente sans active
-    const msg = err?.response?.data || err.message;
-    console.error("⚠️  PUT avec 'active' a échoué, retry sans 'active'...");
-    console.error(msg);
-
-    const retryPayload = { ...payload };
-    delete retryPayload.active;
-
-    const { data: updated2 } = await client.put(`/workflows/${id}`, retryPayload);
-    console.log(`✅ Workflow mis à jour (sans active): ${updated2?.name ?? retryPayload.name} (#${id})`);
-    console.log("ℹ️  Si tu veux gérer active proprement, on peut ajouter un endpoint dédié selon ta version n8n.");
+    await client.put(`/workflows/${id}`, { ...wf, ...patch });
+    spin.succeed(`Updated #${id} — backup saved`);
+  } catch (e) {
+    spin.fail("Update failed");
+    console.error(e?.response?.data || e.message);
   }
 }
