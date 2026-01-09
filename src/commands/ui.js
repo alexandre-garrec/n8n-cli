@@ -11,6 +11,7 @@ import { saveWorkflowVersion, listWorkflowVersions } from "./save.js";
 import { invokeWorkflowWebhook } from "./invoke.js";
 import { loadFavorites, toggleFavorite } from "../utils/favorites.js";
 import { copy } from "../utils/clipboard.js";
+import { deriveBaseUrl } from "../utils/urlHelper.js";
 
 function asArrayData(resp) {
   return resp?.data?.data || resp?.data || [];
@@ -117,17 +118,7 @@ export async function uiWorkflows(opts) {
     // 1) Determine UI base url:
     // - prefer uiBaseUrl from Settings
     // - otherwise derive from API base url by stripping /api/v1 (or /api)
-    let base = String(creds.uiBaseUrl || "").trim();
-
-    if (!base) {
-      const api = String(creds.url || "").trim(); // API base URL
-      if (api) {
-        base = api
-          .replace(/\/api\/v1\/?$/i, "")
-          .replace(/\/api\/?$/i, "")
-          .replace(/\/+$/, "");
-      }
-    }
+    let base = deriveBaseUrl(creds);
 
     if (!base) {
       console.log(
