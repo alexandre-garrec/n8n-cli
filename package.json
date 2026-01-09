@@ -1,6 +1,6 @@
 {
   "name": "cli-n8n",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "bin": {
     "cli-n8n": "bin/cli-n8n.js"
