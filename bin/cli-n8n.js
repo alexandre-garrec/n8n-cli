@@ -19,7 +19,7 @@ import { shareWorkflow } from "../src/commands/share.js";
 const program = new Command();
 
 program
-  .name("n8n-cli")
+  .name("cli-n8n")
   .description("CLI to manage n8n workflows (interactive + commands)")
   .version("0.1.0")
   .showHelpAfterError(true)

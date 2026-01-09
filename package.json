@@ -1,13 +1,13 @@
 {
-  "name": "n8n-cli",
-  "version": "0.1.0",
+  "name": "cli-n8n",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
-    "n8n-cli": "bin/n8n-cli.js"
+    "cli-n8n": "bin/cli-n8n.js"
   },
   "scripts": {
-    "dev": "node bin/n8n-cli.js",
-    "start": "node bin/n8n-cli.js",
+    "dev": "node bin/cli-n8n.js",
+    "start": "node bin/cli-n8n.js",
     "lint": "node -e \"console.log('Add eslint if you want')\""
   },
   "dependencies": {

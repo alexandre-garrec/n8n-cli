@@ -7,7 +7,7 @@ import { importWorkflows, getWorkflowNameFromSource } from "./import.js";
 
 function header() {
   console.clear();
-  console.log(chalk.cyan.bold("n8n-cli"));
+  console.log(chalk.cyan.bold("cli-n8n"));
   console.log(chalk.gray("Manage n8n workflows from your terminal\n"));
 }
 
@@ -52,10 +52,30 @@ export async function interactiveMenu(opts) {
 
     if (action === "export") {
       const answers = await inquirer.prompt([
-        { type: "confirm", name: "all", message: "Export all workflows?", default: true },
-        { type: "confirm", name: "bundle", message: "Create bundle.zip?", default: true },
-        { type: "input", name: "out", message: "Output path/folder:", default: "./exports" },
-        { type: "confirm", name: "clean", message: "Clean before export?", default: true },
+        {
+          type: "confirm",
+          name: "all",
+          message: "Export all workflows?",
+          default: true,
+        },
+        {
+          type: "confirm",
+          name: "bundle",
+          message: "Create bundle.zip?",
+          default: true,
+        },
+        {
+          type: "input",
+          name: "out",
+          message: "Output path/folder:",
+          default: "./exports",
+        },
+        {
+          type: "confirm",
+          name: "clean",
+          message: "Clean before export?",
+          default: true,
+        },
       ]);
       await exportWorkflows({ global: opts.global, ...answers });
       continue;
@@ -71,14 +91,27 @@ export async function interactiveMenu(opts) {
         },
       ]);
 
-      const detectedName = await getWorkflowNameFromSource({ global: opts.global, pathOrUrl });
+      const detectedName = await getWorkflowNameFromSource({
+        global: opts.global,
+        pathOrUrl,
+      });
 
       const { name } = await inquirer.prompt([
-        { type: "input", name: "name", message: "Workflow name:", default: detectedName || "Imported workflow" },
+        {
+          type: "input",
+          name: "name",
+          message: "Workflow name:",
+          default: detectedName || "Imported workflow",
+        },
       ]);
 
       const { upsert } = await inquirer.prompt([
-        { type: "confirm", name: "upsert", message: "Upsert by name (update if exists)?", default: true },
+        {
+          type: "confirm",
+          name: "upsert",
+          message: "Upsert by name (update if exists)?",
+          default: true,
+        },
       ]);
 
       await importWorkflows({

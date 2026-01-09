@@ -2,7 +2,7 @@ import envPaths from "env-paths";
 import { promises as fs } from "fs";
 import path from "path";
 
-const APP_NAME = "n8n-cli";
+const APP_NAME = "cli-n8n";
 const paths = envPaths(APP_NAME);
 const CONFIG_FILE = path.join(paths.config, "config.json");
 
@@ -21,8 +21,8 @@ export async function readConfig() {
     return {
       activeProfile: "default",
       profiles: {
-        default: { url: "", key: "", uiBaseUrl: "" }
-      }
+        default: { url: "", key: "", uiBaseUrl: "" },
+      },
     };
   }
 }
@@ -42,7 +42,8 @@ export async function updateConfig(patch) {
 export async function ensureProfile(profile) {
   const cfg = await readConfig();
   cfg.profiles = cfg.profiles || {};
-  if (!cfg.profiles[profile]) cfg.profiles[profile] = { url: "", key: "", uiBaseUrl: "" };
+  if (!cfg.profiles[profile])
+    cfg.profiles[profile] = { url: "", key: "", uiBaseUrl: "" };
   if (!cfg.activeProfile) cfg.activeProfile = profile;
   await writeConfig(cfg);
   return cfg;

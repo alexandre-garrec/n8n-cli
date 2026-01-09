@@ -1,4 +1,4 @@
-# n8n-cli
+# cli-n8n
 
 A fast CLI to manage **n8n workflows** from your terminal.
 
@@ -18,8 +18,8 @@ A fast CLI to manage **n8n workflows** from your terminal.
 ## Install
 
 ```bash
-npm i -g n8n-cli
-n8n-cli
+npm i -g cli-n8n
+cli-n8n
 ```
 
 ## Setup (recommended)
@@ -27,7 +27,7 @@ n8n-cli
 Run:
 
 ```bash
-n8n-cli
+cli-n8n
 ```
 
 Go to: **Settings → Configure credentials**
@@ -51,47 +51,47 @@ Priority: **flags → env → saved config**
 List:
 
 ```bash
-n8n-cli list
-n8n-cli list --search "invoice"
+cli-n8n list
+cli-n8n list --search "invoice"
 ```
 
 Export (bundle.zip):
 
 ```bash
-n8n-cli export --all --bundle -o ./exports
+cli-n8n export --all --bundle -o ./exports
 ```
 
 Import (URL/file/bundle.zip):
 
 ```bash
-n8n-cli import ./workflow.json
-n8n-cli import https://example.com/workflow.json
-n8n-cli import ./exports/bundle.zip
+cli-n8n import ./workflow.json
+cli-n8n import https://example.com/workflow.json
+cli-n8n import ./exports/bundle.zip
 ```
 
 Import upsert by name:
 
 ```bash
-n8n-cli import https://example.com/workflow.json --upsert
+cli-n8n import https://example.com/workflow.json --upsert
 ```
 
 Delete (backup first):
 
 ```bash
-n8n-cli delete 123
+cli-n8n delete 123
 ```
 
 Edit (backup first):
 
 ```bash
-n8n-cli edit 123 --name "New name"
-n8n-cli edit 123 --active true
+cli-n8n edit 123 --name "New name"
+cli-n8n edit 123 --active true
 ```
 
 Share:
 
 ```bash
-n8n-cli share 123
+cli-n8n share 123
 ```
 
 > Sharing starts a local server and can launch a Cloudflare quick tunnel (requires `cloudflared` installed).
