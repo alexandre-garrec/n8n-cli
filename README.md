@@ -12,11 +12,6 @@ A fast CLI to manage **n8n workflows** from your terminal.
 - ✅ `--upsert` by name (update if exists) + **automatic backups**
 - ✅ Automatic backups before delete/update
 - ✅ Export `bundle.zip`
-- ✅ Kiff features:
-  - Copy workflow ID/name/share URL to clipboard
-  - Open workflow in browser (set UI Base URL in Settings)
-  - Recent workflows view
-  - Previews/summaries in the UI
 
 ## Install
 
