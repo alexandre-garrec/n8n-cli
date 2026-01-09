@@ -32,6 +32,8 @@ temp/
 # Local backups created by patch scripts
 **/*.bak
 
+versions/
+
 # Logs
 logs/
 *.log

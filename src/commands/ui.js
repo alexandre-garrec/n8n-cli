@@ -7,19 +7,25 @@ import { exportWorkflows } from "./export.js";
 import { deleteWorkflows } from "./delete.js";
 import { editWorkflow } from "./edit.js";
 import { shareWorkflow } from "./share.js";
+import { saveWorkflowVersion, listWorkflowVersions } from "./save.js";
+import { invokeWorkflowWebhook } from "./invoke.js";
+import { loadFavorites, toggleFavorite } from "../utils/favorites.js";
 import { copy } from "../utils/clipboard.js";
 
 function asArrayData(resp) {
   return resp?.data?.data || resp?.data || [];
 }
 
-function short(w) {
-  return `#${w.id} ${w.name} ${w.active ? "✅" : "⭕"}`;
+function short(w, favs = []) {
+  const isFav = favs.includes(String(w.id));
+  const str = `${w.active ? "🟢" : "⚫️"} ${w.name} #${w.id}`;
+  return isFav ? chalk.yellow(str) : str;
 }
 
 export async function uiWorkflows(opts) {
   const client = await createN8nClient(opts.global);
   const creds = await getResolvedCreds(opts.global);
+  const favs = await loadFavorites();
 
   const list = await withSpinner(
     "Loading workflows…",
@@ -32,16 +38,20 @@ export async function uiWorkflows(opts) {
 
   let workflows = list;
 
-  // "recent" mode: keep latest updated first if field exists
-  if (opts.recent) {
-    workflows = [...workflows]
-      .sort((a, b) => {
-        const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
-        const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
-        return tb - ta;
-      })
-      .slice(0, 30);
-  }
+  // Sorting: favorites first, then by date if recent
+  workflows = [...workflows].sort((a, b) => {
+    const aFav = favs.includes(String(a.id));
+    const bFav = favs.includes(String(b.id));
+    if (aFav && !bFav) return -1;
+    if (!aFav && bFav) return 1;
+
+    if (opts.recent) {
+      const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return tb - ta;
+    }
+    return 0; // standard order
+  });
 
   if (opts.search) {
     const q = String(opts.search).toLowerCase();
@@ -63,7 +73,7 @@ export async function uiWorkflows(opts) {
       name: "picked",
       message: "Select a workflow",
       pageSize: 18,
-      choices: workflows.map((w) => ({ name: short(w), value: w })),
+      choices: workflows.map((w) => ({ name: short(w, favs), value: w })),
     },
   ]);
 
@@ -86,11 +96,15 @@ export async function uiWorkflows(opts) {
       name: "action",
       message: "Action",
       choices: [
+        { name: "🪝 Invoke Webhook", value: "invoke" },
         { name: "🌐 Open in browser", value: "open" },
         { name: "📦 Export this workflow", value: "export" },
         // { name: "✏️ Rename / Toggle active", value: "edit" },
         { name: "🗑️ Delete (with backup)", value: "delete" },
         { name: "🔗 Share (local + Cloudflare)", value: "share" },
+        { name: "💾 Save local version", value: "save_version" },
+        { name: "📂 List local versions", value: "list_versions" },
+        { name: "⭐ Toggle favorite", value: "fav" },
         new inquirer.Separator(),
         { name: "⬅ Back", value: "back" },
       ],
@@ -214,6 +228,71 @@ export async function uiWorkflows(opts) {
       clean: true,
       tunnel: "cloudflare",
     });
+    return;
+  }
+
+  if (action === "save_version") {
+    const ans = await inquirer.prompt([
+      {
+        type: "input",
+        name: "comment",
+        message: "Version comment (optional):",
+      },
+    ]);
+
+    await saveWorkflowVersion({
+      global: opts.global,
+      id: w.id,
+      name: w.name,
+      comment: ans.comment,
+    });
+    return;
+  }
+
+  if (action === "list_versions") {
+    const list = await listWorkflowVersions(w.name);
+    if (!list.length) {
+      console.log(chalk.yellow("No local versions found."));
+      return;
+    }
+
+    const { selected } = await inquirer.prompt([
+      {
+        type: "list",
+        name: "selected",
+        message: "Select version:",
+        choices: [
+          ...list.map((f) => ({ name: f.name, value: f })),
+          new inquirer.Separator(),
+          { name: "⬅ Back", value: "back" },
+        ],
+      },
+    ]);
+
+    if (selected === "back") return;
+
+    // For now, just show the path
+    console.log(chalk.green("\nFile located at:"));
+    console.log(chalk.white(selected.path));
+    // TODO: Add ability to restore or diff
+    return;
+  }
+
+  if (action === "invoke") {
+    await invokeWorkflowWebhook({
+      global: opts.global,
+      id: w.id,
+    });
+    return;
+  }
+
+  if (action === "fav") {
+    const isNowFav = await toggleFavorite(w.id);
+    console.log(
+      isNowFav
+        ? chalk.yellow(`\n⭐ Added "${w.name}" to favorites.`)
+        : chalk.white(`\nRemoved "${w.name}" from favorites.`)
+    );
     return;
   }
 }
