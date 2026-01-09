@@ -2,7 +2,7 @@
 
 A powerful, interactive CLI to manage and test **n8n workflows** directly from your terminal.
 
-![render1767984415745-min](https://github.com/user-attachments/assets/eed4225f-2fc3-471d-9c0c-697ca876ee7f)
+![render1767985696782-min](https://github.com/user-attachments/assets/c1efd063-f454-4cf3-a632-376bd45fdd6c)
 
 ## ✨ Features
 
