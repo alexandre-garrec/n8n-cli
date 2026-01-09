@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+import { Command } from "commander";
+import dotenv from "dotenv";
+
+import { listWorkflows } from "../src/commands/list.js";
+import { deleteWorkflows } from "../src/commands/delete.js";
+import { exportWorkflows } from "../src/commands/export.js";
+import { importWorkflows } from "../src/commands/import.js";
+import { uiWorkflows } from "../src/commands/ui.js";
+import { editWorkflow } from "../src/commands/edit.js";
+import { interactiveMenu } from "../src/commands/menu.js";
+import { shareWorkflow } from "../src/commands/share.js";
+
+dotenv.config();
+
+const program = new Command();
+
+program
+  .name("n8n-cli")
+  .description("CLI pour gérer des workflows n8n (local + menu interactif)")
+  .version("0.1.0")
+  .showHelpAfterError(true)
+  .showSuggestionAfterError(true);
+
+program
+  .option("--url <url>", "Override base URL (ex: http://localhost:5678/api/v1)")
+  .option("--key <key>", "Override API key")
+  .option("--json", "Sortie JSON (quand possible)", false);
+
+/**
+ * COMMANDES CLASSIQUES (toujours dispo)
+ */
+program
+  .command("list")
+  .description("Lister les workflows")
+  .option("--search <q>", "Filtrer par nom (contient)")
+  .option("--limit <n>", "Limiter le nombre", (v) => parseInt(v, 10))
+  .action(async (opts) => {
+    await listWorkflows({ global: program.opts(), ...opts });
+  });
+
+program
+  .command("delete")
+  .description("Supprimer des workflows")
+  .argument("[id]", "ID du workflow à supprimer")
+  .option("--name <name>", "Supprimer par nom EXACT")
+  .option("--search <q>", "Supprimer tous ceux dont le nom contient <q>")
+  .option("--dry-run", "Ne supprime pas, affiche seulement", false)
+  .action(async (id, opts) => {
+    await deleteWorkflows({ global: program.opts(), id, ...opts });
+  });
+
+program
+  .command("export")
+  .description("Exporter des workflows vers JSON")
+  .argument("[id]", "ID du workflow à exporter")
+  .option("--all", "Exporter tous les workflows", false)
+  .option("-o, --out <path>", "Fichier ou dossier de sortie", "./exports")
+  .option("--clean", "Nettoyer le workflow (minimal) avant export", false)
+  .action(async (id, opts) => {
+    await exportWorkflows({ global: program.opts(), id, ...opts });
+  });
+
+program
+  .command("import")
+  .description("Importer un workflow (fichier/dossier/URL)")
+  .argument("<pathOrUrl>", "Fichier JSON, dossier, ou URL (https://...)")
+  .option("--update", "Update si un workflow du même nom existe", false)
+  .option("--dry-run", "Ne crée/update pas, affiche seulement", false)
+  .option("--clean", "Nettoyer avant import (utile si JSON complet)", true)
+  .option("--name <name>", "Forcer le nom du workflow importé")
+  .action(async (pathOrUrl, opts) => {
+    await importWorkflows({ global: program.opts(), pathOrUrl, ...opts });
+  });
+
+program
+  .command("edit")
+  .description("Éditer un workflow (rename/active) via API")
+  .argument("<id>", "ID du workflow")
+  .option("--name <name>", "Nouveau nom")
+  .option("--active <bool>", "Activer/désactiver (true/false)")
+  .action(async (id, opts) => {
+    await editWorkflow({ global: program.opts(), id, ...opts });
+  });
+
+program
+  .command("ui")
+  .description("Mode interactif: liste + actions (delete/edit/export/share)")
+  .option("--search <q>", "Filtrer par nom (contient)")
+  .action(async (opts) => {
+    await uiWorkflows({ global: program.opts(), ...opts });
+  });
+
+program
+  .command("share")
+  .description("Partager un workflow (serveur local temporaire + option Cloudflare tunnel)")
+  .argument("<id>", "ID du workflow")
+  .option("--port <n>", "Port HTTP (défaut: 3333)", "3333")
+  .option("--host <host>", "Host bind (défaut: 127.0.0.1)", "127.0.0.1")
+  .option("--public", "Bind sur 0.0.0.0 (accessible LAN/VPN)", false)
+  .option("--ttl <sec>", "Durée de partage en secondes (auto-stop)")
+  .option("--once", "Stop après 1 téléchargement", false)
+  .option("--token <t>", "Token d'accès (query ?token=...)", "")
+  .option("--name <name>", "Nom du fichier exposé (sans .json)")
+  .option("--clean", "Nettoyer le workflow avant partage", true)
+  .option("--tunnel <type>", "none | cloudflare", "none")
+  .option("--cloudflared <path>", "Chemin vers cloudflared (si pas dans PATH)")
+  .action(async (id, opts) => {
+    await shareWorkflow({ global: program.opts(), id, ...opts });
+  });
+
+/**
+ * MENU PRINCIPAL
+ */
+program
+  .command("menu")
+  .description("Menu interactif principal")
+  .action(async () => {
+    await interactiveMenu({ global: program.opts() });
+  });
+
+// Commande inconnue => aide + exit 1
+program.on("command:*", () => {
+  console.error(`❌ Commande inconnue: ${program.args.join(" ")}`);
+  program.help({ error: true });
+});
+
+// Si lancé sans args => menu principal
+const rawArgs = process.argv.slice(2);
+if (rawArgs.length === 0) {
+  // ⚠️ pas de "background": on exécute tout de suite
+  interactiveMenu({ global: program.opts() })
+    .catch((err) => {
+      console.error("❌ Erreur:", err?.response?.data || err.message || err);
+      process.exit(1);
+    });
+} else {
+  program.parseAsync(process.argv).catch((err) => {
+    console.error("❌ Erreur:", err?.response?.data || err.message || err);
+    process.exit(1);
+  });
+}
