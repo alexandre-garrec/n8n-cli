@@ -2,6 +2,8 @@
 
 A fast CLI to manage **n8n workflows** from your terminal.
 
+<img width="551" height="246" alt="Capture d’écran 2026-01-09 à 04 05 19" src="https://github.com/user-attachments/assets/7e7575e5-5e14-44c5-9f36-74d29f17ed80" />
+
 ## Features
 
 - ✅ Interactive menu (default)
