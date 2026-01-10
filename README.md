@@ -15,16 +15,34 @@ A powerful, interactive CLI to manage and test **n8n workflows** directly from y
 
 ## 📦 Install
 
+### Global Installation (Recommended)
+
 ```bash
 npm i -g cli-n8n
+```
+
+### Or use with npx (No installation required)
+
+```bash
+npx cli-n8n
 ```
 
 ## 🚀 Quick Start
 
 1.  **Run the CLI**:
+
+    With global install:
+
     ```bash
     cli-n8n
     ```
+
+    Or with npx:
+
+    ```bash
+    npx cli-n8n
+    ```
+
 2.  **Configure**: Go to **Settings → Configure credentials** to connect your n8n instance.
 
 ## 📖 Usage Guide
