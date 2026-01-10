@@ -69,16 +69,110 @@ Never lose work again. Save snapshots to your machine.
 - **Filter**: Search by name or ID.
 - **Favorites**: Highlight important workflows (displayed with ⭐).
 
+### 📤 Workflow Sharing
+
+Share workflows instantly via HTTP server with optional public access through Cloudflare tunnel.
+
+#### Local Sharing
+
+Share a workflow on your local network:
+
+```bash
+cli-n8n share <workflow-id>
+```
+
+This starts a local HTTP server (default port: 3333) and provides:
+
+- **Local URL**: Access from your machine (`http://127.0.0.1:3333/workflow.json`)
+- **Network URL**: Access from devices on the same network
+- **Auto-copy**: URL automatically copied to clipboard
+
+Options:
+
+- `--port <number>`: Custom port (default: 3333)
+- `--public`: Bind to `0.0.0.0` for network access
+- `--clean=false`: Include credentials (default: cleaned)
+
+#### Public Sharing with Cloudflare
+
+Share workflows publicly using Cloudflare tunnel (requires [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)):
+
+```bash
+cli-n8n share <workflow-id> --tunnel cloudflare
+```
+
+This creates a temporary public URL via `trycloudflare.com`:
+
+- ✅ No Cloudflare account required
+- ✅ Instant public HTTPS link
+- ✅ Perfect for sharing with teammates
+- ⚠️ Link expires when you stop the server (CTRL+C)
+
+Install cloudflared:
+
+```bash
+# macOS
+brew install cloudflare/cloudflare/cloudflared
+
+# Linux
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared-linux-amd64.deb
+```
+
+### 📥 Workflow Import
+
+Import workflows from multiple sources:
+
+#### From Local File
+
+```bash
+cli-n8n import ./workflow.json
+```
+
+#### From URL
+
+Import directly from a shared link (perfect with `share` command!):
+
+```bash
+cli-n8n import https://example.trycloudflare.com/123.json
+```
+
+The CLI automatically:
+
+- Downloads the JSON with retry logic
+- Handles DNS resolution delays
+- Validates the workflow structure
+
+#### From Bundle (ZIP)
+
+Import multiple workflows from a backup bundle:
+
+```bash
+cli-n8n import ./bundle.zip
+```
+
+#### Import Options
+
+- `--name "Custom Name"`: Override workflow name
+- `--upsert`: Update existing workflow with same name (auto-backup before overwrite)
+- `--clean=false`: Keep credentials (default: cleaned)
+- `--dry-run`: Preview what would be imported without making changes
+
 ## 🛠 Commands
 
-| Command                         | Description                           |
-| :------------------------------ | :------------------------------------ |
-| `cli-n8n`                       | Launch interactive mode (Recommended) |
-| `cli-n8n list`                  | List workflows                        |
-| `cli-n8n list --search "foo"`   | Search workflows                      |
-| `cli-n8n export --all --bundle` | Backup all workflows to a zip         |
-| `cli-n8n import ./file.json`    | Import workflow                       |
-| `cli-n8n delete <id>`           | Delete workflow (auto-backed up)      |
+| Command                                  | Description                           |
+| :--------------------------------------- | :------------------------------------ |
+| `cli-n8n`                                | Launch interactive mode (Recommended) |
+| `cli-n8n list`                           | List workflows                        |
+| `cli-n8n list --search "foo"`            | Search workflows                      |
+| `cli-n8n share <id>`                     | Share workflow locally                |
+| `cli-n8n share <id> --tunnel cloudflare` | Share workflow publicly (Cloudflare)  |
+| `cli-n8n import ./file.json`             | Import from local file                |
+| `cli-n8n import <url>`                   | Import from URL                       |
+| `cli-n8n import ./bundle.zip`            | Import from bundle                    |
+| `cli-n8n import <url> --upsert`          | Import and update if exists           |
+| `cli-n8n export --all --bundle`          | Backup all workflows to a zip         |
+| `cli-n8n delete <id>`                    | Delete workflow (auto-backed up)      |
 
 ## ⚙️ Configuration
 
